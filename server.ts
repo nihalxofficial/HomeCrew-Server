@@ -1,0 +1,102 @@
+import express, { Request, Response } from "express";
+import mongoose, { Schema, model } from "mongoose";
+import cors from "cors";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// ---------- MODEL ----------
+const serviceSchema = new Schema(
+  {
+    title: { type: String, required: true },
+    category: { type: String, required: true },
+    shortDescription: { type: String, required: true },
+    fullDescription: { type: String, required: true },
+    price: { type: Number, required: true },
+    priceUnit: { type: String, enum: ["fixed", "hourly"], default: "fixed" },
+    duration: { type: String, required: true },
+    imageUrl: { type: String, default: "" },
+    tags: [String],
+  },
+  { timestamps: true }
+);
+
+const Service = model("Service", serviceSchema);
+
+// ---------- ROUTES ----------
+app.get("/", (req: Request, res: Response) => {
+  res.send({message: "HomeCrew API is running"});
+});
+
+// Get all services
+app.get("/api/services", async (req: Request, res: Response) => {
+  try {
+    const services = await Service.find();
+    res.status(200).json(services);
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch services" });
+  }
+});
+
+// Get one service
+app.get("/api/services/:id", async (req: Request, res: Response) => {
+  try {
+    const service = await Service.findById(req.params.id);
+    if (!service) return res.status(404).json({ message: "Service not found" });
+    res.status(200).json(service);
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch service" });
+  }
+});
+
+// Create service
+app.post("/api/services", async (req: Request, res: Response) => {
+  try {
+    const service = await Service.create(req.body);
+    res.status(201).json(service);
+  } catch (error) {
+    res.status(400).json({ message: "Failed to create service" });
+  }
+});
+
+// Update service
+app.patch("/api/services/:id", async (req: Request, res: Response) => {
+  try {
+    const service = await Service.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+    });
+    if (!service) return res.status(404).json({ message: "Service not found" });
+    res.status(200).json(service);
+  } catch (error) {
+    res.status(400).json({ message: "Failed to update service" });
+  }
+});
+
+// Delete service
+app.delete("/api/services/:id", async (req: Request, res: Response) => {
+  try {
+    const service = await Service.findByIdAndDelete(req.params.id);
+    if (!service) return res.status(404).json({ message: "Service not found" });
+    res.status(200).json({ message: "Service deleted" });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to delete service" });
+  }
+});
+
+// ---------- DB CONNECT + START ----------
+const PORT = process.env.PORT || 5000;
+
+mongoose
+  .connect(process.env.MONGO_URI as string)
+  .then(() => {
+    console.log("MongoDB connected");
+    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+  })
+  .catch((err) => {
+    console.error("MongoDB connection failed:", err);
+    process.exit(1);
+  });
