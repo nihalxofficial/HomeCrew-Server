@@ -88,15 +88,14 @@ app.delete("/api/services/:id", async (req: Request, res: Response) => {
 });
 
 // ---------- DB CONNECT + START ----------
-const PORT = process.env.PORT || 5000;
-
 mongoose
   .connect(process.env.MONGO_URI as string)
-  .then(() => {
-    console.log("MongoDB connected");
-    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-  })
-  .catch((err) => {
-    console.error("MongoDB connection failed:", err);
-    process.exit(1);
-  });
+  .then(() => console.log("MongoDB connected"))
+  .catch((err) => console.error("MongoDB connection failed:", err));
+
+const PORT = process.env.PORT || 5000;
+if (process.env.NODE_ENV !== "production") {
+  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+}
+
+export default app;
