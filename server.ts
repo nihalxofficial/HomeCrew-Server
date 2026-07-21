@@ -11,9 +11,6 @@ app.use(express.json());
 
 // ---------- MODELS ----------
 
-// User model — maps to the "user" collection Better Auth already creates/manages.
-// We're not writing to this collection from here, just reading/referencing it
-// (e.g. via populate) since Better Auth owns its shape and lifecycle.
 const userSchema = new Schema(
   {
     name: { type: String, required: true },
@@ -41,7 +38,7 @@ const serviceSchema = new Schema(
     tags: [String],
     whatsIncluded: [String],
     availableCities: [String],
-    isFeatured: {type: Boolean},
+    isFeatured: { type: Boolean },
     creatorId: { type: Schema.Types.ObjectId, ref: "User", required: true },
   },
   { timestamps: true }
@@ -57,8 +54,68 @@ app.get("/", (req: Request, res: Response) => {
 // Get all services
 app.get("/api/services", async (req: Request, res: Response) => {
   try {
-    const services = await Service.find().populate("creatorId", "name email image");
-    res.status(200).json(services);
+    const {
+      search,
+      category,
+      minPrice,
+      maxPrice,
+      sort = "newest",
+      page = "1",
+      limit = "8",
+    } = req.query;
+
+    // ---------- BUILD FILTER ----------
+    const filter: Record<string, any> = {};
+
+    if (search) {
+      const searchRegex = new RegExp(search as string, "i");
+      filter.$or = [
+        { title: searchRegex },
+        { shortDescription: searchRegex },
+        { tags: searchRegex },
+      ];
+    }
+
+    if (category) {
+      filter.category = category;
+    }
+
+    if (minPrice || maxPrice) {
+      filter.price = {};
+      if (minPrice) filter.price.$gte = Number(minPrice);
+      if (maxPrice) filter.price.$lte = Number(maxPrice);
+    }
+
+    // ---------- BUILD SORT ----------
+    const sortOptions: Record<string, any> = {
+      price_asc: { price: 1 },
+      price_desc: { price: -1 },
+      newest: { createdAt: -1 },
+      oldest: { createdAt: 1 },
+    };
+    const sortQuery = sortOptions[sort as string] || sortOptions.newest;
+
+    // ---------- PAGINATION ----------
+    const pageNum = Math.max(Number(page), 1);
+    const limitNum = Math.max(Number(limit), 1);
+    const skip = (pageNum - 1) * limitNum;
+
+    // ---------- QUERY ----------
+    const [services, totalCount] = await Promise.all([
+      Service.find(filter)
+        // .populate("creatorId", "name email image")
+        .sort(sortQuery)
+        .skip(skip)
+        .limit(limitNum),
+      Service.countDocuments(filter),
+    ]);
+
+    res.status(200).json({
+      data: services,
+      totalCount,
+      totalPages: Math.ceil(totalCount / limitNum),
+      currentPage: pageNum,
+    });
   } catch (error) {
     res.status(500).json({ message: "Failed to fetch services" });
   }
