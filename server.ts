@@ -2,17 +2,25 @@ import express, { Request, Response } from "express";
 import mongoose, { Schema, model } from "mongoose";
 import cors from "cors";
 import dotenv from "dotenv";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+
 
 dotenv.config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY as string);
 
 // ---------- MODELS ----------
+interface ChatMessage {
+  role: "user" | "model";
+  text: string;
+}
 
 const userSchema = new Schema(
   {
+    _id: { type: String, required: true },
     name: { type: String, required: true },
     email: { type: String, required: true },
     image: { type: String, default: "" },
@@ -39,7 +47,7 @@ const serviceSchema = new Schema(
     whatsIncluded: [String],
     availableCities: [String],
     isFeatured: { type: Boolean },
-    creatorId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    creatorId: { type: String, ref: "User", required: true },
   },
   { timestamps: true }
 );
@@ -51,12 +59,46 @@ app.get("/", (req: Request, res: Response) => {
   res.send({ message: "HomeCrew API is running" });
 });
 
+app.post("/api/chat", async (req: Request, res: Response) => {
+  try {
+    const { message, history } = req.body as {
+      message: string;
+      history?: ChatMessage[];
+    };
+
+    if (!message) {
+      return res.status(400).json({ message: "message is required" });
+    }
+
+    const model = genAI.getGenerativeModel({
+      model: "gemini-2.0-flash",
+      systemInstruction:
+        "You are a helpful home-services advisor for HomeCrew. Ask short clarifying questions about the customer's home problem until you can confidently suggest a service category. Keep replies brief and friendly.",
+    });
+
+    const chat = model.startChat({
+      history: (history ?? []).map((h) => ({
+        role: h.role,
+        parts: [{ text: h.text }],
+      })),
+    });
+
+    const result = await chat.sendMessage(message);
+    const reply = result.response.text();
+
+    res.status(200).json({ reply });
+  } catch (error) {
+    res.status(500).json({ message: "Chat failed" });
+  }
+});
+
 // Get all services
 app.get("/api/services", async (req: Request, res: Response) => {
   try {
     const {
       search,
       category,
+      creatorId,
       minPrice,
       maxPrice,
       sort = "newest",
@@ -78,6 +120,10 @@ app.get("/api/services", async (req: Request, res: Response) => {
 
     if (category) {
       filter.category = category;
+    }
+
+    if (creatorId) {
+      filter.creatorId = creatorId;
     }
 
     if (minPrice || maxPrice) {
