@@ -3,6 +3,7 @@ import mongoose, { Schema, model } from "mongoose";
 import cors from "cors";
 import dotenv from "dotenv";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import Groq from "groq-sdk";
 
 
 dotenv.config();
@@ -11,12 +12,28 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY as string);
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+
 
 // ---------- MODELS ----------
 interface ChatMessage {
   role: "user" | "model";
   text: string;
 }
+
+interface GeneratedListing {
+  title: string;
+  category: string;
+  shortDescription: string;
+  fullDescription: string;
+  price: number;
+  priceUnit: "fixed" | "hourly";
+  duration: string;
+  tags: string[];
+  whatsIncluded: string[];
+  availableCities: string[];
+}
+
 
 const userSchema = new Schema(
   {
@@ -57,7 +74,7 @@ const Service = model("Service", serviceSchema);
 // ---------- ROUTES ----------
 app.get("/", (req: Request, res: Response) => {
   res.send({ message: "HomeCrew API is running" });
-});
+ });
 
 app.post("/api/chat", async (req: Request, res: Response) => {
   try {
@@ -71,9 +88,8 @@ app.post("/api/chat", async (req: Request, res: Response) => {
     }
 
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.0-flash",
-      systemInstruction:
-        "You are a helpful home-services advisor for HomeCrew. Ask short clarifying questions about the customer's home problem until you can confidently suggest a service category. Keep replies brief and friendly.",
+      model: "gemini-flash-latest", // currently resolves to gemini-3.5-flash
+      systemInstruction: "...",
     });
 
     const chat = model.startChat({
@@ -84,11 +100,59 @@ app.post("/api/chat", async (req: Request, res: Response) => {
     });
 
     const result = await chat.sendMessage(message);
+
     const reply = result.response.text();
 
     res.status(200).json({ reply });
   } catch (error) {
+    console.error("Chat error:", error); // make sure this is here too
     res.status(500).json({ message: "Chat failed" });
+  }
+});
+
+app.post("/api/services/generate", async (req: Request, res: Response) => {
+  try {
+    const { idea } = req.body as { idea: string };
+    if (!idea) {
+      return res.status(400).json({ message: "idea is required" });
+    }
+
+    const existingCategories = await Service.distinct("category");
+
+    const response = await groq.chat.completions.create({
+      model: "openai/gpt-oss-120b",
+      messages: [
+        {
+          role: "user",
+          content: `A service provider gave this rough idea for a home service listing: "${idea}"
+
+Existing categories on the platform: ${existingCategories.join(", ")}
+If none fit well, suggest a new short category name (select from existing or new).
+
+Generate a complete, realistic service listing. Respond ONLY with valid JSON, no markdown, no preamble:
+{
+  "title": "<short catchy title>",
+  "category": "<best fitting category>",
+  "shortDescription": "<one sentence, under 100 characters>",
+  "fullDescription": "<2-3 sentences describing the service in detail>",
+  "price": <realistic number, no currency symbol>,
+  "priceUnit": "fixed" or "hourly",
+  "duration": "<e.g. '1-2 hours', '30 mins'>",
+  "tags": [<3-5 relevant lowercase keyword strings>],
+  "whatsIncluded": [<3-4 detail strings of what the service includes>],
+  "availableCities": [<2-3 realistic city names where this service is offered>]
+}`,
+        },
+      ],
+    });
+
+    const text = response.choices[0].message.content ?? "{}";
+    const generated: GeneratedListing = JSON.parse(text.trim());
+
+    res.status(200).json(generated);
+  } catch (error) {
+    console.error("Service generation error:", error);
+    res.status(500).json({ message: "Failed to generate listing" });
   }
 });
 
